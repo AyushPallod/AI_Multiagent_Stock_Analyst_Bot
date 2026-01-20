@@ -2,200 +2,236 @@
 import streamlit as st
 import pandas as pd
 import time
-from typing import Dict, Any
-from ollama import Client
-
-# Import the existing graph run function
-# Ensure that c:\PROJECTS\Multiagent_Trader_Bot is in python path or just run from root
-import sys
 import os
+import sys
+from typing import Dict, Any
 
-# Fix path to allow imports from root
+# -------------------------------------------------------------------
+# CONFIG & PATH SETUP
+# -------------------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-
-# Load Configuration (Proxies, etc)
 import config
 
+# FORCE CLEAR PROXIES for Localhost Ollama
+os.environ["HTTP_PROXY"] = ""
+os.environ["HTTPS_PROXY"] = ""
+os.environ["ALL_PROXY"] = ""
+os.environ["NO_PROXY"] = "*"
+
+# Import Graph
 try:
     from graph.graph import run
 except ImportError as e:
-    st.error(f"Could not import 'run' from 'graph.graph'. Error: {e}")
-    st.info(f"Current Path: {sys.path}")
+    st.error(f"Import Error: {e}")
     st.stop()
 
-# Initialize Ollama
-client = Client()
+from ollama import Client, ResponseError
 
-st.set_page_config(layout="wide", page_title="Trader Bot AI")
+# -------------------------------------------------------------------
+# APP CONFIG
+# -------------------------------------------------------------------
+st.set_page_config(
+    layout="wide", 
+    page_title="Multiagent Trader Bot", 
+    page_icon="📈"
+)
 
-# Create a session state to store the "Agent State" (the raw data)
+# Custom CSS for better look
+st.markdown("""
+<style>
+    .metric-card {
+        background-color: #0e1117;
+        border: 1px solid #262730;
+        border-radius: 5px;
+        padding: 15px;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #00ff00;
+    }
+    .metric-label {
+        font-size: 14px;
+        color: #888;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 if "agent_state" not in st.session_state:
     st.session_state["agent_state"] = None
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
-# ---------------------------------------------------------
-# HELPER: Build Context string for RAG
-# ---------------------------------------------------------
+# -------------------------------------------------------------------
+# HELPER: RAG CONTEXT
+# -------------------------------------------------------------------
 def build_rag_context(state: Dict[str, Any]) -> str:
-    """
-    Extracts key structured data from the state to form a context string
-    for the LLM. Filters out massive raw data to keep it concise.
-    """
-    if not state:
-        return ""
+    if not state: return ""
 
     ticker = state.get("ticker", "Unknown")
-    
-    # 1. Prices
-    price = state.get("price_data", {})
-    latest = price.get("latest", {})
-    latest_str = f"Usage: {latest}" if latest else "No Data"
-
-    # 2. Indicators
+    price = state.get("price_data", {}).get("latest", {})
     inds = state.get("indicators", {})
-    ind_str = ", ".join([f"{k}={v}" for k,v in inds.items() if isinstance(v, (int, float, str))])
-
-    # 3. Patterns
     patterns = state.get("patterns", {})
-    pat_str = str(patterns.get("top_pattern", "None"))
-    sr = patterns.get("support_resistance", {})
-    
-    # 4. Fundamental
-    fund = state.get("fundamentals", {})
-    fund_score = fund.get("fundamental_score", "N/A")
-    rec = fund.get("fundamental_recommendation", "N/A")
-    growth = fund.get("growth", "N/A")
-    gov_flags = fund.get("governance_flags", "None")
-
-    # 5. Sentiment & News
-    sent = state.get("sentiment", {})
-    news_items = sent.get("latest_news_summary", [])
-    # Take top 5 news only
-    news_str = "\n".join([f"- {n}" for n in news_items[:5]])
-
-    # 6. Risk
     risk = state.get("risk", {})
-    risk_str = f"StopLoss={risk.get('stop_loss')}, Target={risk.get('target')}, RiskLevel={risk.get('risk_level')}"
+    funds = state.get("fundamentals", {})
+    sentiment = state.get("sentiment", {})
+    
+    # Format Technicals
+    tech_str = "\n".join([f"- {k}: {v}" for k,v in inds.items() if k in ['EMA20','SMA50','RSI14','MACD_HIST','ADX14']])
+    
+    # Format News (Top 3 with sentiment)
+    news_items = sentiment.get("latest_news_summary", [])
+    news_str = "\n".join([f"- {n}" for n in news_items[:3]])
 
-    context = f"""
-    [TICKER]: {ticker}
-    [LATEST PRICE]: {latest_str}
-    [TECHNICAL INDICATORS]: {ind_str}
-    [PATTERNS]: {pat_str}
-    [SUPPORT/RESISTANCE]: {sr}
-    [RISK PROFILE]: {risk_str}
-    [FUNDAMENTALS]: Score={fund_score}, Rec={rec}, Growth={growth}, Flags={gov_flags}
-    [TOP NEWS]:
+    return f"""
+    STOCK: {ticker}
+    PRICE: {price.get('close')} (Vol: {price.get('volume')})
+    
+    [TECHNICALS]
+    {tech_str}
+    Trend: {patterns.get('trend_structure', {}).get('trend')}
+    Pattern: {patterns.get('top_pattern', {}).get('name')}
+    Support: {patterns.get('support_resistance', {}).get('supports')}
+    Resistance: {patterns.get('support_resistance', {}).get('resistances')}
+    
+    [RISK & VOLATILITY]
+    Risk Level: {risk.get('risk_level')} (Score: {risk.get('risk_score')})
+    Volatility: {risk.get('volatility')}
+    ATR (14): {risk.get('atr')}
+    ATR %: {risk.get('atr_pct')}% (Higher % = Higher Volatility/Risk)
+    Stop Loss: {risk.get('stop_loss')}
+    Target: {risk.get('target')}
+    
+    [FUNDAMENTALS]
+    Score: {funds.get('fundamental_score')}
+    Recommendation: {funds.get('fundamental_recommendation')}
+    Growth Metric: {funds.get('growth')}
+    
+    [NEWS & SENTIMENT]
+    Sentiment Score: {sentiment.get('score')} ({sentiment.get('overall')})
+    Recent Headlines:
     {news_str}
     """
-    return context
 
-# ---------------------------------------------------------
-# UI LAYOUT
-# ---------------------------------------------------------
-st.title("🤖 Multiagent Trader Bot")
+# -------------------------------------------------------------------
+# HELPER: SAFETY OLLAMA CALL
+# -------------------------------------------------------------------
+def safe_ollama_chat(model, messages):
+    """
+    Wrapper to handle connection errors gracefully.
+    """
+    client = Client(host='http://127.0.0.1:11434') # Force localhost
+    try:
+        return client.chat(model=model, messages=messages, stream=True)
+    except Exception as e:
+        st.error(f"🛑 Connection Error: Could not connect to Ollama at 127.0.0.1:11434.")
+        st.info("💡 Troubleshooting:\n1. Open a new terminal.\n2. Run `ollama serve`.\n3. Keep that window open and try again.")
+        st.exception(e)
+        return None
 
+# -------------------------------------------------------------------
+# SIDEBAR
+# -------------------------------------------------------------------
 with st.sidebar:
-    st.header("Configuration")
-    ticker_input = st.text_input("Enter Ticker (e.g. RELIANCE.NS)", value="RELIANCE.NS")
-    run_btn = st.button("Generate Report", type="primary")
+    st.title("⚙️ Configuration")
+    ticker_input = st.text_input("Ticker Symbol", value="RELIANCE.NS").upper()
+    if st.button("🚀 Generate Report", type="primary"):
+        with st.spinner("🤖 Agents are researching..."):
+            try:
+                final_state = run(ticker_input)
+                st.session_state["agent_state"] = final_state
+                st.session_state["messages"] = [] # Reset chat
+                st.rerun() # Refresh to show data
+            except Exception as e:
+                st.error(f"Agent Error: {e}")
 
-    st.info("Ensure Ollama is running locally.")
-    if st.button("Clear Chat"):
+    st.divider()
+    if st.button("🗑️ Clear Chat History"):
         st.session_state["messages"] = []
 
-# MAIN EXECUTION
-if run_btn:
-    with st.spinner(f"Agents are researching {ticker_input}... (This may take 80-90s)"):
-        try:
-            # RUN THE GRAPH
-            # We assume run() returns the final state dict
-            final_state = run(ticker_input)
-            
-            # STORE STATE
-            st.session_state["agent_state"] = final_state
-            
-            # Clear previous chat on new run
-            st.session_state["messages"] = []
-            
-            st.success("Report Generated!")
-        except Exception as e:
-            st.error(f"Error running agents: {e}")
-
-# DISPLAY RESULTS
+# -------------------------------------------------------------------
+# MAIN DASHBOARD
+# -------------------------------------------------------------------
 state = st.session_state["agent_state"]
 
 if state:
-    # 1. SHOW THE REPORT
-    st.subheader(f"Investment Report: {state.get('ticker')}")
+    t_data = state.get("price_data", {}).get("latest", {})
+    r_data = state.get("risk", {})
     
-    analysis_text = state.get("analysis", "No analysis found.")
-    st.markdown(analysis_text)
+    # 1. HEADER METRICS
+    st.title(f"{state.get('ticker')} Analysis")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Current Price", f"₹{t_data.get('close', 0)}")
+    c2.metric("Target", f"₹{r_data.get('target', 0)}")
+    c3.metric("Stop Loss", f"₹{r_data.get('stop_loss', 0)}")
+    c4.metric("Risk Level", r_data.get('risk_level', 'N/A'))
     
     st.divider()
-    
-    # 2. EXPANDABLE DATA SECTIONS (Optional verification)
-    with st.expander("🔍 Inspect Raw Agent Data"):
-        tab1, tab2, tab3 = st.tabs(["Technicals", "Fundamentals", "Sentiment"])
-        with tab1:
-            st.json(state.get("indicators"))
-            st.json(state.get("patterns"))
-            st.json(state.get("risk"))
-        with tab2:
-            st.json(state.get("fundamentals"))
-        with tab3:
-            st.write(state.get("sentiment"))
 
+    # 2. REPORT TABS
+    tab_report, tab_tech, tab_fund, tab_news = st.tabs(["📝 Final Report", "📈 Technicals", "🏢 Fundamentals", "📰 News"])
+    
+    with tab_report:
+        st.markdown(state.get("analysis", "No analysis found."))
+        
+    with tab_tech:
+        st.subheader("Technical Indicators")
+        st.json(state.get("indicators"))
+        st.subheader("detected Patterns")
+        st.json(state.get("patterns"))
+        
+    with tab_fund:
+        f = state.get("fundamentals", {})
+        st.subheader(f"Fundamental Score: {f.get('fundamental_score')}/100")
+        st.markdown(f"**Recommendation:** {f.get('fundamental_recommendation')}")
+        st.markdown(f"**Growth:** {f.get('growth')}")
+        st.json(f)
+        
+    with tab_news:
+        s = state.get("sentiment", {})
+        st.subheader(f"Sentiment: {s.get('overall')} ({s.get('score')})")
+        st.write(s.get("latest_news_summary"))
+    
     st.divider()
 
-    # 3. RAG CHAT INTERFACE
-    st.subheader("💬 Chat with the Data")
-    
-    # Display chat history
+    # 3. RAG CHAT
+    st.subheader("💬 Ask the Analyst")
+    st.caption(f"Chatting with context from {state.get('ticker')} report.")
+
     for msg in st.session_state["messages"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Chat input
-    if prompt := st.chat_input("Ask a specific question about this stock (e.g. 'What is the stop loss?')"):
-        # Add user message
+    if prompt := st.chat_input("Ex: 'Why is the risk high?' or 'What are the support levels?'"):
         st.session_state["messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # GENERATE RESPONSE
         with st.chat_message("assistant"):
-            # Build Context
-            context_str = build_rag_context(state)
+            context = build_rag_context(state)
+            system = f"""You are a specialized financial analyst for {state.get('ticker')}.
             
-            # System Prompt (STRICT RAG)
-            system_prompt = f"""You are a dedicated financial analyst assisting with THIS SPECIFIC STOCK.
+            CRITICAL INSTRUCTIONS:
+            1. **Source of Truth**: Answer ONLY using the provided "CONTEXT" block below. Do NOT use outside knowledge or training data.
+            2. **Methodology**: 
+               - Scan the Context sections ([TECHNICALS], [RISK], [FUNDAMENTALS], etc.) for keywords related to the user's question.
+               - Synthesize the answer using *only* the specific numbers and facts found there.
+            3. **Handling Missing Data**: If the exact answer is not in the context, state "I do not have that specific data in my report."
+            4. **Tone**: Professional, concise, and data-driven.
             
-            STRICT RULES:
-            1. Answer ONLY using the provided CONTEXT DATA below.
-            2. If the user asks for a value (e.g., "stop loss", "trend"), give the EXACT value from the context.
-            3. Do NOT explain what a term means (e.g., dont explain what RSI is, just give the RSI value).
-            4. If the answer is not in the context, state "I do not have that specific data in my report."
-            
-            CONTEXT DATA:
-            {context_str}
+            CONTEXT:
+            {context}
             """
             
-            # Stream response
-            stream = client.chat(
-                model=config.APP_LLM_MODEL,
-                messages=[
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': prompt}
-                ],
-                stream=True,
+            stream_gen = safe_ollama_chat(
+                config.APP_LLM_MODEL, 
+                [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
             )
             
-            response = st.write_stream(chunk['message']['content'] for chunk in stream)
-            
-        # Add assistant message
-        st.session_state["messages"].append({"role": "assistant", "content": response})
+            if stream_gen:
+                response = st.write_stream(chunk['message']['content'] for chunk in stream_gen)
+                st.session_state["messages"].append({"role": "assistant", "content": response})
 
 else:
-    st.write("👈 Enter a ticker and click 'Generate Report' to start.")
+    st.info("👈 Enter a ticker in the sidebar and click **Generate Report** to begin.")

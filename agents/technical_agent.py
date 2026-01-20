@@ -42,6 +42,15 @@ def fetch_price_yahoo(ticker: str):
     if df is None or df.empty:
         return {"ticker": t_in, "yahoo_symbol": sym, "error": f"No NSE data for {sym}"}
 
+    # Fetch Company Name (Info)
+    company_name = t_in # fallback
+    try:
+        # Ticker.info makes a network call, might fail or be slow
+        info = yf.Ticker(sym).info
+        company_name = info.get("longName") or info.get("shortName") or t_in
+    except Exception:
+        pass
+        
     # Convert into history list
     df = df.reset_index()
 
@@ -97,7 +106,8 @@ def fetch_price_yahoo(ticker: str):
     rows = df[out_cols].to_dict("records")
 
     latest = rows[-1]
-    return {"ticker": t_in, "yahoo_symbol": sym, "history": rows, "latest": latest}
+    latest = rows[-1]
+    return {"ticker": t_in, "yahoo_symbol": sym, "history": rows, "latest": latest, "company_name": company_name}
 
 
 # --------------------------
@@ -116,10 +126,11 @@ def node_fetch(state):
         }
 
     result = fetch_price_yahoo(ticker)
-    print("exit price node")
+    print(f"exit price node (Company: {result.get('company_name')})")
     return {
         **state,
-        "ticker": ticker,       
+        "ticker": ticker,
+        "company_name": result.get("company_name"),
         "price_data": result    
     }
 

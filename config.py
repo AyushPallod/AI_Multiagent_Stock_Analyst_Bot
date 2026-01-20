@@ -41,4 +41,4 @@ setup_proxy()
 # -------------------------------------------------------------------
 # Model to use for generation (Must be pulled in Ollama)
 # Options: "llama31", "phi3", "fin-llama31"
-APP_LLM_MODEL = "phi3" 
+APP_LLM_MODEL = "fin-llama31" 

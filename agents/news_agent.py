@@ -80,7 +80,46 @@ def fetch_sebi(query: str) -> List[Dict[str, Any]]:
 # ----------------------------------------------------
 # Tier-1 News APIs (GNews free, Bing optional)
 # ----------------------------------------------------
+# ----------------------------------------------------
+# Tier-1 News APIs (GNews free, Bing optional)
+# ----------------------------------------------------
+def fetch_google_rss(query: str) -> List[Dict[str, Any]]:
+    """
+    Fetches news from Google News RSS (No API Key needed).
+    Very effective for specific queries like 'ICICI Prudential Life Insurance'.
+    """
+    # Force sort by date to get recent news
+    url = f"https://news.google.com/rss/search?q={query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
+    try:
+        # Use random agent
+        ua = random.choice(USER_AGENTS)
+        resp = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": ua})
+        if resp.status_code != 200:
+            return []
+            
+        feed = feedparser.parse(resp.content)
+        out = []
+        for e in feed.entries:
+            # Clean summary from Google's localized HTML
+            summary = e.get("summary", "")
+            if summary:
+                # Basic cleaning of HTML tags
+                summary = re.sub(r'<[^>]+>', '', summary)
+            
+            out.append({
+                "title": e.get("title", ""),
+                "summary": summary,
+                "link": e.get("link", ""),
+                "source": "GoogleNews",  # or e.get('source', {}).get('title')
+                "published": e.get("published", None)
+            })
+        return out
+    except Exception as e:
+        print(f"Google RSS Error: {e}")
+        return []
+
 def fetch_gnews(query: str, max_items=10):
+    # Fallback to API if needed, but RSS is better for coverage
     url = f"https://gnews.io/api/v4/search?q={query}&lang=en&country=in&max={max_items}&apikey=demo"
     try:
         r = requests.get(url, timeout=TIMEOUT)
@@ -158,38 +197,83 @@ def dedupe(items: List[Dict[str, Any]]):
 # ----------------------------------------------------
 # AI RELEVANCE FILTER
 # ----------------------------------------------------
-def ai_filter(query: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Input: list of raw items
-    Output: filtered list sorted by relevance
-    """
-    if not items:
-        return []
-
     # 1. Pre-filter by Keyword locally to reduce LLM load
     # If we have too many items, prioritizing those containing query words
-    q_tokens = set(query.lower().split())
     
+    # Generate tokens from Query (Ticker) AND from Company Name if available in state
+    # NOTE: The caller (node_news_fetch) needs to pass company_name. 
+    # But ai_filter signature only takes query. 
+    # We will assume 'query' might contain company name OR we should update signature.
+    # Actually, let's just be robust: rely on what's passed, or improve the logic inside node_news_fetch to pass a rich query.
+    # However, to avoid changing signature too much, let's extract tokens from the query string itself if it's "TIC CER" 
+    # OR better: let's update proper logic.
+    
+    # Wait, the caller (node_news_fetch) constructs 'query'.
+    # But 'node_news_fetch' HAS state['company_name'].
+    # So we should update ai_filter to take (items, ticker, company_name).
+    pass 
+    
+def ai_filter(items: List[Dict[str, Any]], ticker: str, company_name: str) -> List[Dict[str, Any]]:
+    if not items: return []
+
+    # Safe defaults
+    ticker = (ticker or "").lower().replace(".ns", "")
+    company = (company_name or "").lower()
+    
+    # 1. Build Critical Token Set
+    critical_tokens = set()
+    
+    # Ticker tokens (e.g. "reliance")
+    if len(ticker) > 2: critical_tokens.add(ticker)
+    
+    # Company Name tokens (e.g. "ICICI", "Prudential")
+    # Remove junk
+    junk = ["ltd", "limited", "corporation", "corp", "inc", "india", "industries", "holdings", "enterprise", "company", "life", "insurance", "financial", "services", "finance"]
+    clean_company = company
+    for j in junk:
+        # Case insensitive replace for junk
+        clean_company = re.sub(f"(?i)\\b{j}\\b", "", clean_company)
+    
+    # Split by non-alphanumeric
+    c_tokens = re.split(r'[^a-z0-9]', clean_company)
+    for t in c_tokens:
+        if len(t) > 2:
+            critical_tokens.add(t)
+
     scored_candidates = []
+    
+    # Keywords for scoring boost
+    boost_keywords = set(ticker.split()) | critical_tokens
+    
     for item in items:
+        # text = title + summary
         text = (item.get("title", "") + " " + item.get("summary", "")).lower()
         score = 0
-        if any(t in text for t in q_tokens):
+        
+        # STRICT FILTER: Must contain at least one critical token
+        if critical_tokens:
+             # REGEX WORD BOUNDARY MATCH
+             # prevents "life" matching "lifestyle"
+             # We check if ANY token exists as a whole word
+             found_token = False
+             for t in critical_tokens:
+                 if re.search(f"\\b{t}\\b", text):
+                     found_token = True
+                     break
+             
+             if not found_token:
+                 continue 
+
+        # Scoring
+        if any(t in text for t in boost_keywords):
             score += 5
-        # Boost recent items if published date present (simple checking if key exists/is not None)
         if item.get("published"):
             score += 2
+            
         scored_candidates.append((score, item))
     
-    # Sort and take top 25 for deep analysis
     scored_candidates.sort(key=lambda x: x[0], reverse=True)
     candidates = [x[1] for x in scored_candidates[:25]]
-
-    # 2. LLM Relevance Scan (DISABLED FOR SPEED)
-    # The keyword scoring in step 1 is sufficient and much faster.
-    # LLM filtering adds ~30-60s latency which is unnecessary.
-    
-    # Just return candidates sorted by the heuristic score
     return candidates
 
 # ----------------------------------------------------
@@ -207,6 +291,7 @@ def node_news_fetch(state: Dict[str, Any]) -> Dict[str, Any]:
         futures = [
             ex.submit(fetch_bse_announcements, query),
             ex.submit(fetch_sebi, query),
+            ex.submit(fetch_google_rss, query),  # PRIMARY SOURCE
             ex.submit(fetch_gnews, query),
         ] + [ex.submit(fetch_rss, url) for url in RSS_SOURCES]
 
@@ -220,10 +305,25 @@ def node_news_fetch(state: Dict[str, Any]) -> Dict[str, Any]:
     # Deduplicate
     items = dedupe(items)
     print(f"News: Deduplicated count: {len(items)}")
+    
+    # LOGGING: Print all candidates before AI/Strict Filter
+    print("\n--- RAW CANDIDATES (Pre-Filter) ---")
+    for i, item in enumerate(items):
+        print(f"[{i+1}] {item.get('title')} (Source: {item.get('source')})") 
+    print("-----------------------------------\n")
 
     # AI relevance filtering
     # Use top 20 after filter
-    items = ai_filter(query, items)
+    ticker = state.get("ticker", "")
+    company = state.get("company_name", "")
+    items = ai_filter(items, ticker, company)
+    
+    # LOGGING: Print what survived the strict filter
+    print("\n--- FILTERED CANDIDATES (Post-Filter) ---")
+    for i, item in enumerate(items[:20]):
+         print(f"[{i+1}] {item.get('title')}")
+    print("-----------------------------------------\n")
+    
     items = items[:20]
 
     meta = {
