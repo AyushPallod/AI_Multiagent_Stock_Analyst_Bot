@@ -84,6 +84,13 @@ def build_rag_context(state: Dict[str, Any]) -> str:
     news_items = sentiment.get("latest_news_summary", [])
     news_str = "\n".join([f"- {n}" for n in news_items[:3]])
 
+    # KNOWLEDGE BASE INJECTION
+    try:
+        from knowledge_base import get_definitions_for_context
+        kb_str = get_definitions_for_context(state)
+    except ImportError:
+        kb_str = ""
+
     return f"""
     STOCK: {ticker}
     PRICE: {price.get('close')} (Vol: {price.get('volume')})
@@ -112,6 +119,9 @@ def build_rag_context(state: Dict[str, Any]) -> str:
     Sentiment Score: {sentiment.get('score')} ({sentiment.get('overall')})
     Recent Headlines:
     {news_str}
+    
+    [EDUCATIONAL CONTEXT (Use this to explain concepts)]
+    {kb_str}
     """
 
 # -------------------------------------------------------------------

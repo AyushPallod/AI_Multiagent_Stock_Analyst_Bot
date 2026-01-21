@@ -8,7 +8,7 @@ import os
 USE_PROXY = False
 
 # If USE_PROXY is True, set your proxy URLs here:
-PROXY_URL = "http://172.31.2.3:8080"
+PROXY_URL = ""
 
 def setup_proxy():
     """
