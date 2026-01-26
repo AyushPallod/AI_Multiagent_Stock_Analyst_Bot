@@ -97,7 +97,7 @@ streamlit run app.py
 1.  **Enter Ticker**: In the sidebar, type a valid NSE symbol (e.g., `RELIANCE.NS`, `TATASTEEL.NS`, `ICICIPRULI.NS`).
 2.  **Generate Report**: Click the **"🚀 Generate Report"** button.
     - The agents will start fetching and analyzing.
-    - *Note: First run might take 15-30 seconds.*
+    - *Note: First run might take 45-50 seconds.*
 3.  **View Report**:
     - **Final Report Tab**: The Executive Summary, Trade Call, and Key Drivers.
     - **Technicals / Fundamentals / News Tabs**: Deep dive into the raw data and intermediate metrics.
