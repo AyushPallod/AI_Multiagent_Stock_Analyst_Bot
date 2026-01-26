@@ -20,3 +20,12 @@ Thumbs.db
 *.xlsx
 data/
 models/
+
+# Security / Keys
+ssh_key
+ssh_key.pub
+*.pem
+*.key
+id_rsa
+id_ed25519
+

@@ -48,13 +48,23 @@ cd Multiagent_Trader_Bot
 ```
 
 ### 2. Install Ollama & Pull Models
-This project uses **Ollama** to run local LLMs (Llama 3, Phi-3, etc.) without API costs.
-1.  Download Ollama from [ollama.com](https://ollama.com).
-2.  Pull the required model (default is tailored for `llama3.1` or `fin-llama31`):
+This project uses **Ollama** to run local LLMs. You need two distinct models:
+
+1.  **Chat/Reasoning Model** (Default: `fin-llama31` or `llama3.1`):
     ```bash
     ollama pull llama3.1
     ```
     *Note: Verify the model name in `config.py` (`APP_LLM_MODEL`).*
+
+2.  **Sentiment Expert Model** (`llama3.2-financial`):
+    - This project uses a specialized 3B model for fast news scoring.
+    - **Origin**: This model was self-trained/fine-tuned specifically for this project. [View Training Repo](https://github.com/AyushPallod/llama_finetune_e2e_finance).
+    - **Download the GGUF**: `Llama-3.2-3B-Instruct.Q4_K_M.gguf`
+    - **Place it in**: `models/` directory.
+    - **Create the model**:
+      ```bash
+      ollama create llama3.2-financial -f models/llama3.2-financial.Modelfile
+      ```
 
 ### 3. Install Python Dependencies
 Create a virtual environment (recommended) and install requirements:

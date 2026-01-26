@@ -3,12 +3,15 @@ import re
 from typing import Dict, List, Any
 from ollama import Client
 
+from ollama import Client
+from config import SENTIMENT_LLM_MODEL
+
 ollama_client = Client()
 
 # ---------------------------------------------------------
 # HELPER: Batch Score with Llama 31
 # ---------------------------------------------------------
-def score_batch(articles: List[Dict[str, Any]], model: str = "llama31") -> List[Dict[str, Any]]:
+def score_batch(articles: List[Dict[str, Any]], model: str = SENTIMENT_LLM_MODEL) -> List[Dict[str, Any]]:
     """
     Scores a list of articles in ONE LLM call to save massive time.
     """
@@ -161,7 +164,7 @@ def node_news_score(state: Dict[str, Any]):
     MAX_NEWS = 10  # Reduced from 20 to 10 for SPEED/STABILITY
     top_items = [x[1] for x in ranked_items[:MAX_NEWS]]
     
-    scored = score_batch(top_items, model="llama31")
+    scored = score_batch(top_items, model=SENTIMENT_LLM_MODEL)
     
     print(f"News: Scored {len(scored)} items")
     print("\n--- FINAL SCORED NEWS ---")

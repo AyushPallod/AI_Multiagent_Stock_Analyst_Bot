@@ -41,4 +41,8 @@ setup_proxy()
 # -------------------------------------------------------------------
 # Model to use for generation (Must be pulled in Ollama)
 # Options: "llama31", "phi3", "fin-llama31"
-APP_LLM_MODEL = "fin-llama31" 
+APP_LLM_MODEL = "fin-llama31"
+
+# Specific Model for Sentiment Analysis (Faster/Finetuned)
+# User should run `ollama create llama3.2-financial -f Modelfile` if they have the weights
+SENTIMENT_LLM_MODEL = "llama3.2-financial" 
