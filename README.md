@@ -1,7 +1,7 @@
-# 📈 AI Multiagent Trader Bot
+# 📈 AI Multiagent Stock Analyst Bot
 
 ## 🚀 Project Overview
-The **Multiagent Trader Bot** is an advanced financial analysis tool powered by **Agentic AI**. It uses a graph-based architecture (LangGraph) to orchestrate specialized agents—Technical, Fundamental, News, and Sentiment—to conduct deep-dive research on stock tickers.
+The **Multiagent Stock Analyst Bot** is an advanced financial analysis tool powered by **Agentic AI**. It uses a graph-based architecture (LangGraph) to orchestrate specialized agents—Technical, Fundamental, News, and Sentiment—to conduct deep-dive research on stock tickers.
 
 The system mimics a professional hedge fund analyst team:
 1.  **Researchers** gather raw data (prices, news, indicators).
